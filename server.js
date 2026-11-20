@@ -207,6 +207,24 @@ const srv = http.createServer(async (req, res) => {
   }
 });
 
+/* SEED_COUPON (+SEED_COUPON_DEBRID): en Render el filesystem es efímero y el
+   db se regenera en cada deploy/restart — el cupón de servicio moriría y el
+   provider quedaría mudo hasta recrearlo a mano. Con el env seteado el boot
+   recrea el cupón fijo (idempotente, solo si no existe) y le configura su
+   debrid. */
+if (process.env.SEED_COUPON) {
+  const code = process.env.SEED_COUPON.trim().toUpperCase();
+  const exists = db.prepare('SELECT code FROM accounts WHERE code = ?').get(code);
+  if (!exists) {
+    db.prepare('INSERT INTO accounts (code, days, max_screens, note, created_at, activated_at) VALUES (?,?,?,?,?,?)')
+      .run(code, 3650, 3, 'seed-env', Date.now(), Date.now());
+    console.log('[davent-accounts] cupón seed creado:', code);
+  }
+  if (process.env.SEED_COUPON_DEBRID) {
+    accounts.setDebrid(code, 'torbox', process.env.SEED_COUPON_DEBRID);
+  }
+}
+
 srv.listen(PORT, BIND, () => {
   console.log(`[davent-accounts] escuchando en ${BIND}:${PORT}`);
   console.log(`[davent-accounts] ADMIN_KEY=${ADMIN_KEY}`);
