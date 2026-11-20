@@ -1,0 +1,14 @@
+{
+  "name": "davent-accounts",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sistema de cuentas DaventMovies: cupones por días, límite de pantallas, debrid por usuario y addon Xtream gateada por token.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "admin": "node admin.js"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}
