@@ -46,6 +46,11 @@ const ADMIN_KEY = adminKey();
    Desactivable con REQUIRE_DEBRID=0 para pruebas. */
 const REQUIRE_DEBRID = process.env.REQUIRE_DEBRID !== '0';
 
+/* Rate-limit del mint público de cupones (por IP/día, en memoria — el servicio
+   se reinicia seguido en Render, una ventana fija alcanza). */
+const MINT_PER_IP_DAY = 10;
+const mintLog = new Map(); // ip → timestamps
+
 const MANIFEST = {
   id: 'davent.xtream.latino',
   version: '1.0.0',
@@ -122,6 +127,35 @@ const srv = http.createServer(async (req, res) => {
     }
 
     /* ---------- app ---------- */
+    /* Auto-provisión de cupón para las APKs: el dispositivo se genera su
+       propio cupón sin admin key (el servicio corre en Render con db
+       efímera — los cupones mueren en cada restart). Idempotente por
+       deviceId: si ya tiene un cupón vivo devuelve ese. Rate-limit por IP. */
+    if (path === '/api/coupon' && req.method === 'POST') {
+      const b = await readBody(req);
+      const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '')
+        .split(',')[0].trim() || 'unknown';
+      const now = Date.now();
+      const log = (mintLog.get(ip) || []).filter((t) => now - t < 86400e3);
+      if (log.length >= MINT_PER_IP_DAY) return send(res, 429, { error: 'rate_limited' });
+      mintLog.set(ip, [...log, now]);
+      const devId = String(b.deviceId || '').slice(0, 80);
+      if (devId) {
+        const prev = db
+          .prepare('SELECT account_code FROM devices WHERE device_id = ? ORDER BY last_seen DESC')
+          .get(devId);
+        if (prev && accounts.validateToken(prev.account_code)) {
+          return send(res, 200, { code: prev.account_code, reused: true });
+        }
+      }
+      const c = accounts.createCoupon({ days: 365, screens: 2, note: 'apk-auto' });
+      // El cupón hereda la debrid de servicio (env) si existe — sin ella el
+      // addon respondería needs-debrid hasta configurarla a mano.
+      const dk = process.env.SERVICE_DEBRID_KEY || process.env.SEED_COUPON_DEBRID || process.env.TORBOX_API_KEY || '';
+      if (dk) accounts.setDebrid(c.code, 'torbox', dk);
+      if (devId) accounts.auth(c.code, devId, String(b.name || '').slice(0, 60));
+      return send(res, 200, { code: c.code, days: 365, maxScreens: 2 });
+    }
     if (path === '/api/auth' && req.method === 'POST') {
       const b = await readBody(req);
       const r = accounts.auth(b.code, b.deviceId, b.name);
